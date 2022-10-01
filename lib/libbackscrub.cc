@@ -26,6 +26,7 @@ struct normalization_t {
 };
 
 struct backscrub_ctx_t {
+	int debug;
 	// Loaded inference model
 	std::unique_ptr<tflite::FlatBufferModel> model;
 	// Model interpreter instance
@@ -91,8 +92,9 @@ static cv::Mat getTensorMat(backscrub_ctx_t &ctx, int tnum) {
 	}
 
 	TfLiteIntArray* dims = ctx.interpreter->tensor(tnum)->dims;
-	for (int i = 0; i < dims->size; i++)
-		_dbg(ctx,"tensor #%d: %d\n",tnum,dims->data[i]);
+	if(ctx.debug)
+		for (int i = 0; i < dims->size; i++)
+			_dbg(ctx,"tensor #%d: %d\n",tnum,dims->data[i]);
 	if (dims->data[0] != 1) {
 		_dbg(ctx,"error: tensor #%d: is not single vector (%d)\n", tnum, dims->data[0]);
 		return cv::Mat();
@@ -164,6 +166,7 @@ void *bs_maskgen_new(
 	size_t threads,
 	size_t width,
 	size_t height,
+	int debug,
 	// Optional (nullable) callbacks with caller-provided context
 	// ..debug output
 	void (*ondebug)(void *ctx, const char *msg),
@@ -186,6 +189,7 @@ void *bs_maskgen_new(
 	ctx.oninfer = oninfer;
 	ctx.onmask = onmask;
 	ctx.caller_ctx = caller_ctx;
+	ctx.debug = debug;
 	// Load model
 	ctx.model = tflite::FlatBufferModel::BuildFromFile(modelname.c_str());
 	if (!ctx.model) {
@@ -378,7 +382,7 @@ bool bs_maskgen_process(void *context, cv::Mat &frame, cv::Mat &mask) {
 	mask = ctx.mask;
 	return true;
 }
-
+//cv::Rect bs_calc_cropping(int cw, int ch, int vw, int vh) {
 cv::Rect bs_calc_cropping(int inWidth, int inHeight, int targetWidth, int targetHigh) {
 	// if the input and output aspect ratio are not the same
 	// we can crop the source image. For example if the

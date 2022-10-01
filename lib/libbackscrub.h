@@ -19,6 +19,7 @@ extern void *bs_maskgen_new(
 	size_t threads,
 	size_t width,
 	size_t height,
+	int debug,
 	// Optional (nullable) callbacks with caller-provided context
 	// ..debug output
 	void (*ondebug)(void *ctx, const char *msg),

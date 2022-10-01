@@ -14,6 +14,8 @@
 #include <optional>
 #include <utility>
 #include <condition_variable>
+#include <csignal>
+#include <cstdarg>
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -51,8 +53,7 @@ public:
 
 #define DEBUG_WIN_NAME "Backscrub " _STR(DEEPSEG_VERSION) " ('?' for help)"
 
-int fourCcFromString(const std::string& in)
-{
+int fourCcFromString(const std::string& in) {
 	if (in.empty())
 		return 0;
 
@@ -76,11 +77,11 @@ int fourCcFromString(const std::string& in)
 }
 
 // Parse a geometry specification
-std::optional<std::pair<size_t, size_t>> geometryFromString(const std::string& in) {
-	size_t w, h;
-	if (sscanf(in.c_str(), "%zux%zu", &w, &h)!=2)
+std::optional<std::pair<int, int>> geometryFromString(const std::string& in) {
+	int w, h;
+	if (sscanf(in.c_str(), "%dx%d", &w, &h)!=2)
 		return {};
-	return std::pair<size_t, size_t>(w, h);
+	return std::pair<int, int>(w, h);
 }
 
 // OpenCV helper functions
@@ -240,10 +241,11 @@ public:
 	long loopns;
 
 	CalcMask(const std::string& modelname,
-			 size_t threads,
-			 size_t width,
-			 size_t height) {
-		maskctx = bs_maskgen_new(modelname.c_str(), threads, width, height, nullptr, onprep, oninfer, onmask, this);
+			 int threads,
+			 int width,
+			 int height,
+			 bool debug) {
+		maskctx = bs_maskgen_new(modelname.c_str(), threads, width, height, debug, nullptr, onprep, oninfer, onmask, this);
 		if (!maskctx)
 			throw "Could not create mask context";
 
@@ -346,11 +348,122 @@ std::optional<std::string> resolve_path(const std::string& provided, const std::
 	return {};
 }
 
-int main(int argc, char* argv[]) try {
+// Helper for command line parsing and output of the related messages
+static void printVersion(const char *name, FILE *out) {
+	fprintf(out, "%s version %s\n  (Tensorflow: build %s, run-time %s)\n", name, _STR(DEEPSEG_VERSION), _STR(TF_VERSION), bs_tensorflow_version());
+	fprintf(out, "  (OpenCV: version %s)\n", CV_VERSION);
+	fprintf(out, "(c) 2021 by floe@butterbrot.org & contributors\n");
+	fprintf(out, "https://github.com/floe/backscrub\n");
+}
 
-	printf("%s version %s (Tensorflow: build %s, run-time %s)\n", argv[0], _STR(DEEPSEG_VERSION), _STR(TF_VERSION), bs_tensorflow_version());
-	printf("(c) 2021 by floe@butterbrot.org & contributors\n");
-	printf("https://github.com/floe/backscrub\n");
+static void usage(const char *name, int exitCode, bool syntaxOnly, const char *message) {
+	FILE *out = stderr;
+	if (exitCode == 0) {
+		out = stdout;
+	}
+	if (!syntaxOnly) {
+		printVersion(name, out);
+	}
+	fprintf(out, "\n");
+	fprintf(out, "usage:\n");
+	fprintf(out, "  backscrub [-?] [-d] [-p] <-c CAPTURE_DEVICE> <-v VIRTUAL_DEVICE>\n");
+	fprintf(out, "    [--cg WIDTHxHEIGHT] [--vg WIDTHxHEIGHT] [-t THREADS] [-m MODEL]\n");
+	fprintf(out, "    [-b BACKGROUND] [-p FILTER:VALUE] [-mf FPS] [-rf RATE]\n");
+	if (!syntaxOnly) {
+		fprintf(out, "\n");
+		fprintf(out, "-?|[-]-help\n");
+		fprintf(out, "       Display this usage information\n");
+		fprintf(out, "--version\n");
+		fprintf(out, "        Print version and exit\n");
+		fprintf(out, "-d\n");
+		fprintf(out, "        Increase debug level\n");
+		fprintf(out, "-dt|--debug-time\n");
+		fprintf(out, "        Dispay timing informations\n");
+		fprintf(out, "-s\n");
+		fprintf(out, "        Show progress bar\n");
+		fprintf(out, "-c <Camera Device>\n");
+		fprintf(out, "        Specify the video capture (source) device\n");
+		fprintf(out, "-v <Virtual Device>\n");
+		fprintf(out, "        Specify the virtual camera (sink) device\n");
+		fprintf(out, "-w <WIDTH>\n");
+		fprintf(out, "        DEPRECATED: Specify the video stream width\n");
+		fprintf(out, "-h <HEIGHT>\n");
+		fprintf(out, "        DEPRECATED: Specify the video stream height\n");
+		fprintf(out, "--cg|-cg|--camera-geometry <WIDTHxHEIGHT>\n");
+		fprintf(out, "        Specify the capture device geometry as WIDTHxHEIGHT\n");
+		fprintf(out, "--vg|-vg|virtual-geometry <WIDTHxHEIGHT>\n");
+		fprintf(out, ";       Specify the virtual camera geometry as WIDTHxHEIGHT\n");
+		fprintf(out, "-f <Format>\n");
+		fprintf(out, "        Specify the camera video format, i.e. MJPG or 47504A4D.\n");
+		fprintf(out, "-t <Number of Threads>\n");
+		fprintf(out, "        Specify the number of threads used for processing\n");
+		fprintf(out, "-b <Background>\n");
+		fprintf(out, "        Specify the background (any local or network OpenCV source\n");
+		fprintf(out, "          e.g. local:   backgrounds/total_landscaping.jpg\n");
+		fprintf(out, "          network: https://git.io/JE9o5\n");
+		fprintf(out, "-m <Model>\n");
+		fprintf(out, "        Specify the TFLite model used for segmentation\n");
+		fprintf(out, "-p\n");
+		fprintf(out, "       Add post-processing steps\n");
+		fprintf(out, "-p <bgblur:STRENGTH>\n");
+		fprintf(out, "        Blur the video background\n");
+		fprintf(out, "-H\n");
+		fprintf(out, "        Mirror the output horizontally\n");
+		fprintf(out, "-V\n");
+		fprintf(out, "        Mirror the output vertically\n");
+		fprintf(out, "-mf|--max-fps <FPS>\n");
+		fprintf(out, "        Limit the camera frame rate (may be good while using a HDMI grabber)\n");
+	}
+	if (message)
+		fprintf(out,"\n%s\n", message);
+	exit(exitCode);
+}
+
+static void usage(const char *name, int exitcode, bool syntaxOnly) {
+	usage(name, exitcode, syntaxOnly, nullptr);
+}
+
+static void usage(const char *name, int exitcode) {
+	usage(name, exitcode, false, nullptr);
+}
+
+static char *message(const char *format, ...) {
+	static char buf[81];
+	std::va_list args;
+	va_start(args, format);	
+	vsnprintf(buf, sizeof(buf), format, args);
+	va_end(args);
+	return buf;
+}
+
+
+inline bool _hasValidArgument(const char *name, int arg, int argc, char **argv) {
+	if (arg+1 >= argc) {
+		usage(name, 1, true, message("Option %s require a value", argv[arg]));
+	}
+	if ( *argv[arg+1] == '-') {
+		usage(name, 1, true, message("Option %s require a value found: %s", argv[arg],argv[arg+1]));
+	}
+	return true;
+}
+#define hasValidArgument _hasValidArgument(name, arg, argc, argv)
+
+inline bool cmp(const char *in, const char *opt1) {
+	return strcmp(in, opt1) == 0;
+}
+
+inline bool cmp(const char *in, const char *opt1, const char *opt2) {
+	return strcmp(in, opt1) == 0 ||
+	       strcmp(in, opt2) == 0;
+}
+
+inline bool cmp(const char *in, const char *opt1, const char *opt2, const char *opt3) {
+	return strcmp(in, opt1) == 0 ||
+	       strcmp(in, opt2) == 0 ||
+	       strcmp(in, opt3) == 0;
+}
+
+int main(int argc, char* argv[]) try {
 	timinginfo_t ti;
 	ti.bootns = timestamp();
 	int debug = 0;
@@ -359,176 +472,175 @@ int main(int argc, char* argv[]) try {
 	bool showMask = true;
 	bool showFPS = true;
 	bool showHelp = false;
-	size_t threads = 2;
-	size_t width = 640;
-	size_t height = 480;
+	int threads = 2;
+	int width = 640;
+	int height = 480;
 	bool setWorH = false;
-	std::optional<std::pair<size_t, size_t>> capGeo = {};
-	std::optional<std::pair<size_t, size_t>> vidGeo = {};
+	std::optional<std::pair<int, int>> capGeo = {};
+	std::optional<std::pair<int, int>> vidGeo = {};
 	const char *back = nullptr;
-	const char *vcam = "/dev/video1";
-	const char *ccam = "/dev/video0";
+	const char *vcam = nullptr;
+	const char *ccam = nullptr;
 	bool flipHorizontal = false;
 	bool flipVertical = false;
 	int fourcc = 0;
-	size_t blur_strength = 0;
+	int blur_strength = 0;
 	cv::Rect crop_region(0, 0, 0, 0);
+	int maxFps = 0;
+	int fps = 0;
+	int fpsDivisor = 0;
+	int resizefirst = false;
+	bool debugTiming = false;
 
 	const char* modelname = "selfiesegmentation_mlkit-256x256-2021_01_19-v1215.f16.tflite";
+	char * name = strrchr(argv[0], '/');
+	if (name) {
+		name++;
+	 } else {
+		name = argv[0];
+	}
+    if (argc == 1) {
+		usage(name, 0, false);
+	}
 
-	bool showUsage = false;
 	for (int arg = 1; arg < argc; arg++) {
-		bool hasArgument = arg+1 < argc;
-		if (strncmp(argv[arg], "-?", 2) == 0) {
-			showUsage = true;
-		} else if (strncmp(argv[arg], "-d", 2) == 0) {
+		if (cmp(argv[arg], "-?", "-help", "--help")) {
+			usage(name, 0);
+		} else if (cmp(argv[arg], "-d")) {
 			++debug;
-		} else if (strncmp(argv[arg], "-s", 2) == 0) {
+		} else if (cmp(argv[arg], "-s")) {
 			showProgress = true;
-		} else if (strncmp(argv[arg], "-H", 2) == 0) {
+		} else if (cmp(argv[arg], "-H")) {
 			flipHorizontal = !flipHorizontal;
-		} else if (strncmp(argv[arg], "-V", 2) == 0) {
+		} else if (cmp(argv[arg], "-V")) {
 			flipVertical = !flipVertical;
-		} else if (strncmp(argv[arg], "-v", 2) == 0) {
-			if (hasArgument) {
+		} else if (cmp(argv[arg], "-v")) {
+			if (hasValidArgument) {
 				vcam = argv[++arg];
-			} else {
-				showUsage = true;
 			}
-		} else if (strncmp(argv[arg], "-c", 2) == 0) {
-			if (hasArgument) {
+		} else if (cmp(argv[arg], "-c")) {
+			if (hasValidArgument) {
 				ccam = argv[++arg];
-			} else {
-				showUsage = true;
 			}
-		} else if (strncmp(argv[arg], "-b", 2) == 0) {
-			if (hasArgument) {
+		} else if (cmp(argv[arg], "-b")) {
+			if (hasValidArgument) {
 				back = argv[++arg];
-			} else {
-				showUsage = true;
 			}
-		} else if (strncmp(argv[arg], "-m", 2) == 0) {
-			if (hasArgument) {
+		} else if (cmp(argv[arg], "-m")) {
+			if (hasValidArgument) {
 				modelname = argv[++arg];
-			} else {
-				showUsage = true;
 			}
-		} else if (strncmp(argv[arg], "-p", 2) == 0) {
-			if (hasArgument) {
+		} else if (cmp(argv[arg], "-p")) {
+			if (hasValidArgument) {
 				std::string option = argv[++arg];
 				std::string key = option.substr(0, option.find(":"));
 				std::string value = option.substr(option.find(":")+1);
 				if (key == "bgblur") {
 					if (is_number(value)) {
-					blur_strength = std::stoi(value);
-					if (blur_strength % 2 == 0) {
-						fprintf(stderr, "strength value must be odd\n");
-						showUsage = true;
-					}
+						blur_strength = std::stoi(value);
+						if (blur_strength % 2 == 0) {
+							usage(name, 1, true, "strength value must be odd" );
+						}
 					} else {
 						printf("No strength value supplied, using default strength 25\n");
 						blur_strength = 25;
 					}
 				} else {
-					fprintf(stderr, "Unknown post-processing option: %s\n", option.c_str());
-					showUsage = true;
+					usage(name, 1, false, message("Unknown post-processing option: %s", option.c_str()));
 				}
-			} else {
-				showUsage = true;
 			}
 		// deprecated width/height switches (implicitly capture and virtual camera size)
-		} else if (strncmp(argv[arg], "-w", 2) == 0) {
-			if (hasArgument && sscanf(argv[++arg], "%zu", &width)) {
+		} else if (cmp(argv[arg], "-w")) {
+			if (hasValidArgument && sscanf(argv[++arg], "%d", &width)) {
 				if (!width) {
-					showUsage = true;
+					usage(name, 1, true, message("Option %s require a valid value", argv[arg-1]));
 				}
+				// if the width is odd we will have color error!
+				width = width + width % 2;
 				setWorH = true;
-			} else {
-				showUsage = true;
 			}
-		} else if (strncmp(argv[arg], "-h", 2) == 0) {
-			if (hasArgument && sscanf(argv[++arg], "%zu", &height)) {
+		} else if (cmp(argv[arg], "-h")) {
+			if (hasValidArgument && sscanf(argv[++arg], "%d", &height)) {
 				if (!height) {
-					showUsage = true;
+					usage(name, 1, true, message("Option %s require a valid value", argv[arg-1]));
 				}
 				setWorH = true;
-			} else {
-				showUsage = true;
 			}
 		// replacement geometry switches (separate capture and virtual camera size)
-		} else if (strncmp(argv[arg], "--cg", 4) == 0) {
-			if (hasArgument) {
+		} else if (cmp(argv[arg], "--cg", "-cg", "--camera-geometry")) {
+			if (hasValidArgument) {
 				capGeo = geometryFromString(argv[++arg]);
-				if (!capGeo)
-					showUsage = true;
-			} else {
-				showUsage = true;
+				if (capGeo->first < 1 || capGeo->second < 1) {
+					usage(name, 1, true, message("%s wrong geometry %s", argv[arg-1], argv[arg]));
+				}				
 			}
-		} else if (strncmp(argv[arg], "--vg", 4) == 0) {
-			if (hasArgument) {
+		} else if (cmp(argv[arg], "--vg", "-vg", "--virtual-geometry")) {
+			if (hasValidArgument) {
 				vidGeo = geometryFromString(argv[++arg]);
-				if (!vidGeo)
-					showUsage = true;
-			} else {
-				showUsage = true;
+				if (vidGeo->first < 1 || vidGeo->second < 1) {
+					usage(name, 1, true, message("%s wrong geometry %s", argv[arg-1], argv[arg]));
+				}
+				// if the width is odd we will have color error!
+				vidGeo->first += vidGeo->first % 2;
 			}
-		} else if (strncmp(argv[arg], "-f", 2) == 0) {
-			if (hasArgument) {
+		} else if (cmp(argv[arg], "-f")) {
+			if (hasValidArgument) {
 				fourcc = fourCcFromString(argv[++arg]);
 				if (!fourcc) {
-					showUsage = true;
+					usage(name, 1, false, "Option -f require a valid value");
 				}
-			} else {
-				showUsage = true;
 			}
-		} else if (strncmp(argv[arg], "-t", 2) == 0) {
-			if (hasArgument && sscanf(argv[++arg], "%zu", &threads)) {
+		} else if (cmp(argv[arg], "-t")) {
+			if (hasValidArgument && sscanf(argv[++arg], "%d", &threads)) {
 				if (!threads) {
-					showUsage = true;
+					usage(name, 1, true, message("Option %s require a valid value", argv[arg-1]));
 				}
-			} else {
-				showUsage = true;
 			}
+		// for hdmi grabber with to heigh frame rate
+		} else if (cmp(argv[arg], "--max-fps", "-mf")) {
+			if (hasValidArgument && sscanf(argv[++arg], "%d", &maxFps)) {
+				if (maxFps <= 0) {
+					usage(name, 1, true, message("Option %s require a valid value", argv[arg-1]));
+				}
+			}
+		// proposal
+		} else if (cmp(argv[arg], "-dd")) {
+			debug = 2;
+		} else if (cmp(argv[arg], "--version")) {
+			printVersion(name, stdout);
+			exit(0);
+		} else if (cmp(argv[arg], "--debug-timing", "-dt")) {
+			debugTiming = true;
+		} else if (cmp(argv[arg], "--resize-first", "-rf")) {
+			resizefirst = true;
+		// end of parser
 		} else {
-			fprintf(stderr, "Unknown option: %s\n", argv[arg]);
+			usage(name, 1, true, message("Unknown option: %s", argv[arg]));
+		}
+	}
+
+	if (ccam == nullptr)
+		usage(name, 1, false, "Option -c is mandatory");
+	if (vcam == nullptr)
+		usage(name, 1, false, "Option -v is mandatory");
+
+	// check aspect ration 2.726:1 is thee max aspect ratio found on smartphone
+	if (vidGeo) {
+		if ((float)vidGeo->first/vidGeo->second > 2.726||
+		    (float)vidGeo->second/vidGeo->first >  2.726) {
+			usage(name, 1, true, message(
+			      "Wrong --vg (--video-geometry) parameter %dx%d, aspect ratio to big",
+			      vidGeo->first, vidGeo->second));
 		}
 	}
 
 	// prevent use of both deprecated and current switches
 	if (setWorH && (capGeo || vidGeo)) {
-		showUsage = true;
-		fprintf(stderr, "Error: (DEPRECATED) -w/-h used in conjunction with --cg/--vg.\n");
+		usage(name, 1, true, "Error: (DEPRECATED) -w/-h used in conjunction with --cg/--vg.");
 	}
 	// set capture device geometry from deprecated switches if not set already
 	if (!capGeo) {
-		capGeo = std::pair<size_t, size_t>(width, height);
-	}
-	if (showUsage) {
-		fprintf(stderr, "\n");
-		fprintf(stderr, "usage:\n");
-		fprintf(stderr, "  backscrub [-?] [-d] [-p] [-c <capture>] [-v <virtual>] [--cg <width>x<height>]\n");
-		fprintf(stderr, "    [--vg <width>x<height>] [-t <threads>] [-b <background>] [-m <modell>] [-p <option:value>]\n");
-		fprintf(stderr, "\n");
-		fprintf(stderr, "-?            Display this usage information\n");
-		fprintf(stderr, "-d            Increase debug level\n");
-		fprintf(stderr, "-s            Show progress bar\n");
-		fprintf(stderr, "-c            Specify the video capture (source) device\n");
-		fprintf(stderr, "-v            Specify the virtual camera (sink) device\n");
-		fprintf(stderr, "-w            DEPRECATED: Specify the video stream width\n");
-		fprintf(stderr, "-h            DEPRECATED: Specify the video stream height\n");
-		fprintf(stderr, "--cg          Specify the capture device geometry as <width>x<height>\n");
-		fprintf(stderr, "--vg          Specify the virtual camera geometry as <width>x<height>\n");
-		fprintf(stderr, "-f            Specify the camera video format, i.e. MJPG or 47504A4D.\n");
-		fprintf(stderr, "-t            Specify the number of threads used for processing\n");
-		fprintf(stderr, "-b            Specify the background (any local or network OpenCV source) e.g.\n");
-		fprintf(stderr, "                local:   backgrounds/total_landscaping.jpg\n");
-		fprintf(stderr, "                network: https://git.io/JE9o5\n");
-		fprintf(stderr, "-m            Specify the TFLite model used for segmentation\n");
-		fprintf(stderr, "-p            Add post-processing steps\n");
-		fprintf(stderr, "-p bgblur:<strength>   Blur the video background\n");
-		fprintf(stderr, "-H            Mirror the output horizontally\n");
-		fprintf(stderr, "-V            Mirror the output vertically\n");
-		exit(1);
+		capGeo = std::pair<int, int>(width, height);
 	}
 
 	std::string s_ccam(ccam);
@@ -549,15 +661,21 @@ int main(int argc, char* argv[]) try {
 	// set fourcc (if specified) /before/ attempting to set geometry (@see issue146)
 	if (fourcc)
 		cap.set(cv::CAP_PROP_FOURCC, fourcc);
-	cap.set(cv::CAP_PROP_FRAME_WIDTH,  capGeo.value().first);
-	cap.set(cv::CAP_PROP_FRAME_HEIGHT, capGeo.value().second);
+	cap.set(cv::CAP_PROP_FRAME_WIDTH,  capGeo->first);
+	cap.set(cv::CAP_PROP_FRAME_HEIGHT, capGeo->second);
 	cap.set(cv::CAP_PROP_CONVERT_RGB, true);
-	std::optional<std::pair<size_t, size_t>> tmpGeo = std::pair<size_t, size_t>(
-		(size_t)cap.get(cv::CAP_PROP_FRAME_WIDTH),
-		(size_t)cap.get(cv::CAP_PROP_FRAME_HEIGHT)
+	std::optional<std::pair<int, int>> tmpGeo = std::pair<int, int>(
+		(int)cap.get(cv::CAP_PROP_FRAME_WIDTH),
+		(int)cap.get(cv::CAP_PROP_FRAME_HEIGHT)
 	);
+
+	fps = (int)cap.get(cv::CAP_PROP_FPS);
+	fpsDivisor = 1;
+	if (maxFps > 0) {
+		fpsDivisor = ((fps+maxFps-1) / maxFps);
+	}
 	if (tmpGeo != capGeo) {
-		fprintf(stderr, "Warning: capture device geometry changed from requested values.\n");
+		fprintf(stdout, "Warning: capture device geometry changed from requested values.\n");
 		capGeo = tmpGeo;
 	}
 	if (!vidGeo) {
@@ -565,32 +683,36 @@ int main(int argc, char* argv[]) try {
 	}
 	// aspect ratio changed? warn
 	// NB: we calculate this way round to avoid comparing doubles..
-	size_t expWidth = (size_t)((double)vidGeo.value().second * (double)capGeo.value().first/(double)capGeo.value().second);
-	if (expWidth != vidGeo.value().first) {
-		fprintf(stderr, "Warning: virtual camera aspect ratio does not match capture device.\n");
-	}
-	// calculate crop region, only if result always smaller
+	int expWidth = (int)((double)vidGeo->second * (double)capGeo->first/(double)capGeo->second);
 	if (expWidth != vidGeo->first) {
-		crop_region = bs_calc_cropping(
-		              capGeo->first, capGeo->second,
-		              vidGeo->first, vidGeo->second);
+		fprintf(stdout, "Warning: virtual camera aspect ratio does not match capture device.\n");
 	}
 
-	// dump settings..
-	printf("debug:  %d\n", debug);
-	printf("ccam:   %s\n", s_ccam.c_str());
-	printf("vcam:   %s\n", s_vcam.c_str());
-	printf("capGeo: %zux%zu\n", capGeo.value().first, capGeo.value().second);
-	printf("vidGeo: %zux%zu\n", vidGeo.value().first, vidGeo.value().second);
-	printf("flip_h: %s\n", flipHorizontal ? "yes" : "no");
-	printf("flip_v: %s\n", flipVertical ? "yes" : "no");
-	printf("threads:%zu\n", threads);
-	printf("back:   %s => %s\n", back ? back : "(none)", s_backg ? s_backg.value().c_str() : "(none)");
-	printf("model:  %s => %s\n\n", modelname ? modelname : "(none)", s_model ? s_model.value().c_str() : "(none)");
+	if (capGeo != vidGeo) {
+		crop_region = bs_calc_cropping(
+		               capGeo->first, capGeo->second,
+		               vidGeo->first, vidGeo->second);
+	}
+
+	if (debug) {
+		// dump settings..
+		printVersion(name, stderr);
+		fprintf(stderr, "debug:   %d\n", debug);
+		fprintf(stderr, "ccam:    %s\n", s_ccam.c_str());
+		fprintf(stderr, "vcam:    %s\n", s_vcam.c_str());
+		fprintf(stderr, "capGeo:  %dx%d\n", capGeo->first, capGeo->second);
+		fprintf(stderr, "cam Fps: %d (max: %d, real: %.2g)\n",fps, maxFps?maxFps:fps, (float)fps/fpsDivisor);
+		fprintf(stderr, "vidGeo:  %dx%d\n", vidGeo->first, vidGeo->second);
+		fprintf(stderr, "flip_h:  %s\n", flipHorizontal ? "yes" : "no");
+		fprintf(stderr, "flip_v:  %s\n", flipVertical ? "yes" : "no");
+		fprintf(stderr, "threads: %d\n", threads);
+		fprintf(stderr, "back:    %s => %s\n", back ? back : "(none)", s_backg ? s_backg->c_str() : "(none)");
+		fprintf(stderr, "model:   %s => %s\n\n", modelname ? modelname : "(none)", s_model ? s_model->c_str() : "(none)");
+	}
 
 	// No model - stop here
 	if (!s_model) {
-		printf("Error: unable to load specified model: %s\n", modelname);
+		fprintf(stderr, "Error: unable to load specified model: %s\n", modelname);
 		exit(1);
 	}
 
@@ -607,14 +729,17 @@ int main(int argc, char* argv[]) try {
 		}
 	}
 	// default green screen background (at capture true geometry)
-	std::pair<size_t, size_t> bg_dim = *capGeo;
+	std::pair<int, int> bg_dim = *capGeo;
 	if (crop_region.height) {
 		bg_dim = {crop_region.width, crop_region.height};
+	}
+	if (resizefirst) {
+		bg_dim = *vidGeo;
 	}
 	cv::Mat bg(bg_dim.second, bg_dim.first, CV_8UC3, cv::Scalar(0, 255, 0));
 
 	// Virtual camera (at specified geometry)
-	int lbfd = loopback_init(s_vcam, vidGeo.value().first, vidGeo.value().second, debug);
+	int lbfd = loopback_init(s_vcam, vidGeo->first, vidGeo->second, debug);
 	if(lbfd < 0) {
 		fprintf(stderr, "Failed to initialize vcam device.\n");
 		exit(1);
@@ -625,10 +750,12 @@ int main(int argc, char* argv[]) try {
 	});
 
 	// Processing components, all at capture true geometry
-	std::pair<size_t, size_t> mask_dim = *capGeo;
+	std::pair<int, int> mask_dim = *capGeo;
 	if (crop_region.height) {
 		mask_dim = {crop_region.width, crop_region.height};
 	}
+	if (resizefirst)
+		mask_dim = *vidGeo;
 	cv::Mat mask(mask_dim.second, mask_dim.first, CV_8U);
 
 	cv::Mat raw;
@@ -640,15 +767,21 @@ int main(int argc, char* argv[]) try {
 		aiw=crop_region.width;
 		aih=crop_region.height;
 	}
-	CalcMask ai(*s_model, threads, aiw, aih);
+	if (resizefirst) {
+		aiw=vidGeo->first;
+		aih=vidGeo->second;
+	}
+	CalcMask ai(*s_model, threads, aiw, aih, debug);
 
 	ti.lastns = timestamp();
-	printf("Startup: %ldns\n", diffnanosecs(ti.lastns,ti.bootns));
+	if (debug)
+		fprintf(stderr, "Startup: %ldns\n", diffnanosecs(ti.lastns,ti.bootns));
 
 	bool filterActive = true;
 
 	// mainloop
-	for(bool running = true; running; ) {
+	int skip = fpsDivisor;
+	while(true) {
 		// grab new frame from cam
 		cap.grab();
 		ti.grabns = timestamp();
@@ -657,10 +790,20 @@ int main(int argc, char* argv[]) try {
 		ti.retrns = timestamp();
 
 		if (raw.rows == 0 || raw.cols == 0) continue; // sanity check
+		if (skip < fpsDivisor) {
+			skip++;
+			continue;
+		} else {
+			skip = 1;
+		}
 
 		if (crop_region.height) {
 			raw(crop_region).copyTo(raw);
 		}
+		if (resizefirst) {
+			cv:resize(raw, raw, cv::Size(vidGeo->first,vidGeo->second));
+		}
+
 		ai.set_input_frame(raw);
 		ti.copyns = timestamp();
 
@@ -682,6 +825,10 @@ int main(int argc, char* argv[]) try {
 				} else {
 					tw = capGeo->first;
 					th = capGeo->second;
+				}
+				if (resizefirst) {
+					tw = vidGeo->first;
+					th = vidGeo->second;
 				}
 				if (grab_background(pbk, tw, th, bg) < 0)
 					throw "Failed to read background frame";
@@ -711,8 +858,8 @@ int main(int argc, char* argv[]) try {
 		ti.postns = timestamp();
 
 		// scale to virtual camera geometry (if required)
-		if (vidGeo != capGeo) {
-			cv::resize(raw, raw, cv::Size(vidGeo.value().first,vidGeo.value().second));
+		if (vidGeo != capGeo && !resizefirst) {
+			cv::resize(raw, raw, cv::Size(vidGeo->first,vidGeo->second));
 		}
 		// write frame to v4l2loopback as YUYV
 		raw = convert_rgb_to_yuyv(raw);
@@ -727,7 +874,7 @@ int main(int argc, char* argv[]) try {
 		}
 		ti.v4l2ns=timestamp();
 
-		if (!debug) {
+		if (!debug && !debugTiming) {
 			if (showProgress) {
 				printf(".");
 				fflush(stdout);
@@ -738,22 +885,24 @@ int main(int argc, char* argv[]) try {
 		// timing details..
 		double mfps = 1e9/diffnanosecs(ti.v4l2ns,ti.lastns);
 		double afps = 1e9/ai.loopns;
-		printf("main [grab:%9ld retr:%9ld copy:%9ld prep:%9ld mask:%9ld post:%9ld v4l2:%9ld FPS: %5.2f] ai: [wait:%9ld prep:%9ld tflt:%9ld mask:%9ld FPS: %5.2f] \e[K\r",
-			diffnanosecs(ti.grabns,ti.lastns),
-			diffnanosecs(ti.retrns,ti.grabns),
-			diffnanosecs(ti.copyns,ti.retrns),
-			diffnanosecs(ti.prepns,ti.copyns),
-			diffnanosecs(ti.maskns,ti.prepns),
-			diffnanosecs(ti.postns,ti.maskns),
-			diffnanosecs(ti.v4l2ns,ti.postns),
-			mfps,
-			ai.waitns,
-			ai.prepns,
-			ai.tfltns,
-			ai.maskns,
-			afps
-		);
-		fflush(stdout);
+		if (debugTiming) {
+			printf("main [grab:%9ld retr:%9ld copy:%9ld prep:%9ld mask:%9ld post:%9ld v4l2:%9ld FPS: %5.2f] ai: [wait:%9ld prep:%9ld tflt:%9ld mask:%9ld FPS: %5.2f] \e[K\r",
+				diffnanosecs(ti.grabns,ti.lastns),
+				diffnanosecs(ti.retrns,ti.grabns),
+				diffnanosecs(ti.copyns,ti.retrns),
+				diffnanosecs(ti.prepns,ti.copyns),
+				diffnanosecs(ti.maskns,ti.prepns),
+				diffnanosecs(ti.postns,ti.maskns),
+				diffnanosecs(ti.v4l2ns,ti.postns),
+				mfps,
+				ai.waitns,
+				ai.prepns,
+				ai.tfltns,
+				ai.maskns,
+				afps
+			);
+			fflush(stdout);
+		}
 		ti.lastns = timestamp();
 		if (debug < 2)
 			continue;
@@ -763,8 +912,8 @@ int main(int argc, char* argv[]) try {
 		// frame rates & sizes at the bottom
 		if (showFPS) {
 			char status[80];
-			snprintf(status, sizeof(status), "MainFPS: %5.2f AiFPS: %5.2f (%zux%zu->%zux%zu)",
-				mfps, afps, capGeo.value().first, capGeo.value().second, vidGeo.value().first, vidGeo.value().second);
+			snprintf(status, sizeof(status), "MainFPS: %5.2f AiFPS: %5.2f (%dx%d->%dx%d)",
+				mfps, afps, capGeo->first, capGeo->second, vidGeo->first, vidGeo->second);
 			cv::putText(test, status, cv::Point(5, test.rows-5), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0, 255, 255));
 		}
 		// keyboard help
@@ -789,10 +938,15 @@ int main(int argc, char* argv[]) try {
 			cv::Mat thumb;
 			grab_thumbnail(pbk, thumb);
 			if (!thumb.empty()) {
-				cv::Rect r = cv::Rect(0, 0, thumb.cols, thumb.rows);
-				cv::Mat tri = test(r);
-				thumb.copyTo(tri);
-				cv::rectangle(test, r, cv::Scalar(255,255,255));
+				int h = thumb.rows*160/thumb.cols;
+				if ((h < raw.rows*3/4 || thumb.cols < raw.cols/2) && h > 50) {
+					cv::Rect cr = bs_calc_cropping(thumb.cols, thumb.rows, 160, h);
+					thumb(cr).copyTo(thumb);
+					cv::Rect r = cv::Rect(0, 0, thumb.cols, thumb.rows);
+					cv::Mat tri = test(r);
+					thumb.copyTo(tri);
+					cv::rectangle(test, r, cv::Scalar(255,255,255));
+				}
 			}
 		}
 		// mask as pic-in-pic
@@ -800,13 +954,15 @@ int main(int argc, char* argv[]) try {
 			if (!mask.empty()) {
 				cv::Mat smask, cmask;
 				int mheight = mask.rows*160/mask.cols;
-				cv::resize(mask, smask, cv::Size(160, mheight));
-				cv::cvtColor(smask, cmask, cv::COLOR_GRAY2BGR);
-				cv::Rect r = cv::Rect(vidGeo.value().first-160, 0, 160, mheight);
-				cv::Mat mri = test(r);
-				cmask.copyTo(mri);
-				cv::rectangle(test, r, cv::Scalar(255,255,255));
-				cv::putText(test, "Mask", cv::Point(vidGeo.value().first-155,115), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0,255,255));
+				if ( mheight < raw.rows*3/4 || mask.cols < raw.cols/2) {
+					cv::resize(mask, smask, cv::Size(160, mheight));
+					cv::cvtColor(smask, cmask, cv::COLOR_GRAY2BGR);
+					cv::Rect r = cv::Rect(raw.cols-160, 0, 160,mheight);
+					cv::Mat mri = test(r);
+					cmask.copyTo(mri);
+					cv::rectangle(test, r, cv::Scalar(255,255,255));
+					cv::putText(test, "Mask", cv::Point(raw.cols-155,115), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0,255,255));
+				}
 			}
 		}
 		cv::imshow(DEBUG_WIN_NAME, test);
@@ -814,7 +970,7 @@ int main(int argc, char* argv[]) try {
 		auto keyPress = cv::waitKey(1);
 		switch(keyPress) {
 			case 'q':
-				running = false;
+				std::raise(SIGINT);
 				break;
 			case 's':
 				filterActive = !filterActive;
