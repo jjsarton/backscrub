@@ -15,15 +15,15 @@
 #include "loopback.h"
 
 void print_format(struct v4l2_format*vid_format) {
-	printf("vid_format->type                = %d\n",	vid_format->type );
-	printf("vid_format->fmt.pix.width       = %d\n",	vid_format->fmt.pix.width );
-	printf("vid_format->fmt.pix.height      = %d\n",	vid_format->fmt.pix.height );
-	printf("vid_format->fmt.pix.pixelformat = %d\n",	vid_format->fmt.pix.pixelformat);
-	printf("vid_format->fmt.pix.sizeimage   = %d\n",	vid_format->fmt.pix.sizeimage );
-	printf("vid_format->fmt.pix.field       = %d\n",	vid_format->fmt.pix.field );
-	printf("vid_format->fmt.pix.bytesperline= %d\n",	vid_format->fmt.pix.bytesperline );
-	printf("vid_format->fmt.pix.colorspace  = %d\n",	vid_format->fmt.pix.colorspace );
-	printf("\n");
+	fprintf(stderr, "vid_format->type                = %d\n",	vid_format->type );
+	fprintf(stderr, "vid_format->fmt.pix.width       = %d\n",	vid_format->fmt.pix.width );
+	fprintf(stderr, "vid_format->fmt.pix.height      = %d\n",	vid_format->fmt.pix.height );
+	fprintf(stderr, "vid_format->fmt.pix.pixelformat = %d\n",	vid_format->fmt.pix.pixelformat);
+	fprintf(stderr, "vid_format->fmt.pix.sizeimage   = %d\n",	vid_format->fmt.pix.sizeimage );
+	fprintf(stderr, "vid_format->fmt.pix.field       = %d\n",	vid_format->fmt.pix.field );
+	fprintf(stderr, "vid_format->fmt.pix.bytesperline= %d\n",	vid_format->fmt.pix.bytesperline );
+	fprintf(stderr, "vid_format->fmt.pix.colorspace  = %d\n",	vid_format->fmt.pix.colorspace );
+	fprintf(stderr, "\n");
 }
 
 int loopback_init(const std::string& device, int w, int h, int debug) {

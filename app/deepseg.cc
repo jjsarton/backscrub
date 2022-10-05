@@ -79,8 +79,9 @@ int fourCcFromString(const std::string& in) {
 // Parse a geometry specification
 std::optional<std::pair<int, int>> geometryFromString(const std::string& in) {
 	int w, h;
-	if (sscanf(in.c_str(), "%dx%d", &w, &h)!=2)
+	if (sscanf(in.c_str(), "%dx%d", &w, &h)!=2) {
 		return {};
+	}
 	return std::pair<int, int>(w, h);
 }
 
@@ -192,7 +193,6 @@ protected:
 				while (!new_frame) {
 					condition_new_frame.wait(hold);
 				}
-
 				// change frame buffer pointer
 				new_frame = false;
 				raw_tmp = frame_next;
@@ -205,13 +205,11 @@ protected:
 				fprintf(stderr, "failed to process video frame\n");
 				exit(1);
 			}
-			{
-				std::unique_lock<std::mutex> hold(lock_mask);
-				raw_tmp = mask_out;
-				mask_out = mask_current;
-				mask_current = raw_tmp;
-				new_mask = true;
-			}
+			std::unique_lock<std::mutex> hold(lock_mask);
+			raw_tmp = mask_out;
+			mask_out = mask_current;
+			mask_current = raw_tmp;
+			new_mask = true;
 			loopns = diffnanosecs(timestamp(), tloop);
 		}
 	}
@@ -241,13 +239,14 @@ public:
 	long loopns;
 
 	CalcMask(const std::string& modelname,
-			 int threads,
-			 int width,
-			 int height,
-			 bool debug) {
+	         int threads,
+	         int width,
+	         int height,
+	         bool debug) {
 		maskctx = bs_maskgen_new(modelname.c_str(), threads, width, height, debug, nullptr, onprep, oninfer, onmask, this);
-		if (!maskctx)
+		if (!maskctx) {
 			throw "Could not create mask context";
+		}
 
 		// Do all other initialization …
 		frame_next = &frame1;
@@ -296,23 +295,27 @@ std::optional<std::string> resolve_path(const std::string& provided, const std::
 	// Check for network (URI) schema and return as-is
 	// https://www.rfc-editor.org/rfc/rfc3986#section-3.1
 	// however we require at least two chars in the scheme to allow driver letters to work on Windows..
-	if (std::regex_match(provided, std::regex("^[[:alpha:]][[:alnum:]+-.]{1,}:.*$")))
+	if (std::regex_match(provided, std::regex("^[[:alpha:]][[:alnum:]+-.]{1,}:.*$"))) {
 		return provided;
+	}
 	// We use std::ifstream to check we can open each test path read-only, in order:
 	// 1. exactly what was provided
-	if (std::ifstream(provided).good())
+	if (std::ifstream(provided).good()) {
 		return provided;
+	}
 	// to emulate PATH search behaviour (rule of least surprise), we stop here if provided has path separators
-	if (provided.find('/') != provided.npos)
+	if (provided.find('/') != provided.npos) {
 		return {};
+	}
 	// 2. BACKSCRUB_PATH prefixes if set
 	if (getenv("BACKSCRUB_PATH") != nullptr) {
 		// getline trick: https://stackoverflow.com/questions/5167625/splitting-a-c-stdstring-using-tokens-e-g
 		std::istringstream bsp(getenv("BACKSCRUB_PATH"));
 		while (std::getline(bsp, result, ':')) {
 			result += "/" + type + "/" + provided;
-			if (std::ifstream(result).good())
+			if (std::ifstream(result).good()) {
 				return result;
+			}
 		}
 	}
 	// 3. XDG standard data location
@@ -322,8 +325,9 @@ std::optional<std::string> resolve_path(const std::string& provided, const std::
 		return result;
 	// 4. prefixed with compile-time install path
 	result = std::string() + _STR(INSTALL_PREFIX) + "/share/backscrub/" + type + "/" + provided;
-	if (std::ifstream(result).good())
+	if (std::ifstream(result).good()) {
 		return result;
+	}
 	// 5. relative to current binary location
 	// (https://stackoverflow.com/questions/933850/how-do-i-find-the-location-of-the-executable-in-c)
 	char binloc[1024];
@@ -336,13 +340,15 @@ std::optional<std::string> resolve_path(const std::string& provided, const std::
 		if (pos != result.npos) {
 			result.erase(pos);
 			result += "/share/backscrub/" + type + "/" + provided;
-			if (std::ifstream(result).good())
+			if (std::ifstream(result).good()) {
 				return result;
+			}
 			// development folder?
 			result.erase(pos);
 			result += "/" + type + "/" + provided;
-			if (std::ifstream(result).good())
+			if (std::ifstream(result).good()) {
 				return result;
+			}
 		}
 	}
 	return {};
@@ -414,8 +420,9 @@ static void usage(const char *name, int exitCode, bool syntaxOnly, const char *m
 		fprintf(out, "-mf|--max-fps <FPS>\n");
 		fprintf(out, "        Limit the camera frame rate (may be good while using a HDMI grabber)\n");
 	}
-	if (message)
+	if (message) {
 		fprintf(out,"\n%s\n", message);
+	}
 	exit(exitCode);
 }
 
@@ -489,8 +496,8 @@ int main(int argc, char* argv[]) try {
 	int maxFps = 0;
 	int fps = 0;
 	int fpsDivisor = 0;
-	int resizefirst = false;
 	bool debugTiming = false;
+	bool sendPrevious = false;
 
 	const char* modelname = "selfiesegmentation_mlkit-256x256-2021_01_19-v1215.f16.tflite";
 	char * name = strrchr(argv[0], '/');
@@ -611,18 +618,20 @@ int main(int argc, char* argv[]) try {
 			exit(0);
 		} else if (cmp(argv[arg], "--debug-timing", "-dt")) {
 			debugTiming = true;
-		} else if (cmp(argv[arg], "--resize-first", "-rf")) {
-			resizefirst = true;
+		} else if (cmp(argv[arg], "--video-delayed", "-vd")) {
+			sendPrevious = true;
 		// end of parser
 		} else {
 			usage(name, 1, true, message("Unknown option: %s", argv[arg]));
 		}
 	}
 
-	if (ccam == nullptr)
+	if (ccam == nullptr) {
 		usage(name, 1, false, "Option -c is mandatory");
-	if (vcam == nullptr)
+	}
+	if (vcam == nullptr) {
 		usage(name, 1, false, "Option -v is mandatory");
+	}
 
 	// check aspect ration 2.726:1 is thee max aspect ratio found on smartphone
 	if (vidGeo) {
@@ -646,10 +655,12 @@ int main(int argc, char* argv[]) try {
 	std::string s_ccam(ccam);
 	std::string s_vcam(vcam);
 	// permit unprefixed device names
-	if (s_ccam.rfind("/dev/", 0) != 0)
+	if (s_ccam.rfind("/dev/", 0) != 0) {
 		s_ccam = "/dev/" + s_ccam;
-	if (s_vcam.rfind("/dev/", 0) != 0)
+	}
+	if (s_vcam.rfind("/dev/", 0) != 0) {
 		s_vcam = "/dev/" + s_vcam;
+	}
 	std::optional<std::string> s_model = resolve_path(modelname, "models");
 	std::optional<std::string> s_backg = back ? resolve_path(back, "backgrounds") : std::nullopt;
 	// open capture early to resolve true geometry
@@ -659,14 +670,15 @@ int main(int argc, char* argv[]) try {
 		exit(1);
 	}
 	// set fourcc (if specified) /before/ attempting to set geometry (@see issue146)
-	if (fourcc)
+	if (fourcc) {
 		cap.set(cv::CAP_PROP_FOURCC, fourcc);
+	}
 	cap.set(cv::CAP_PROP_FRAME_WIDTH,  capGeo->first);
 	cap.set(cv::CAP_PROP_FRAME_HEIGHT, capGeo->second);
 	cap.set(cv::CAP_PROP_CONVERT_RGB, true);
 	std::optional<std::pair<int, int>> tmpGeo = std::pair<int, int>(
-		(int)cap.get(cv::CAP_PROP_FRAME_WIDTH),
-		(int)cap.get(cv::CAP_PROP_FRAME_HEIGHT)
+	    (int)cap.get(cv::CAP_PROP_FRAME_WIDTH),
+	    (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT)
 	);
 
 	fps = (int)cap.get(cv::CAP_PROP_FPS);
@@ -728,15 +740,8 @@ int main(int argc, char* argv[]) try {
 			printf("Warning: could not load background image, defaulting to green\n");
 		}
 	}
-	// default green screen background (at capture true geometry)
-	std::pair<int, int> bg_dim = *capGeo;
-	if (crop_region.height) {
-		bg_dim = {crop_region.width, crop_region.height};
-	}
-	if (resizefirst) {
-		bg_dim = *vidGeo;
-	}
-	cv::Mat bg(bg_dim.second, bg_dim.first, CV_8UC3, cv::Scalar(0, 255, 0));
+	// default green screen background (at video true geometry)
+	cv::Mat bg(vidGeo->second, vidGeo->first, CV_8UC3, cv::Scalar(0, 255, 0));
 
 	// Virtual camera (at specified geometry)
 	int lbfd = loopback_init(s_vcam, vidGeo->first, vidGeo->second, debug);
@@ -749,36 +754,20 @@ int main(int argc, char* argv[]) try {
 		loopback_free(lbfd);
 	});
 
-	// Processing components, all at capture true geometry
-	std::pair<int, int> mask_dim = *capGeo;
-	if (crop_region.height) {
-		mask_dim = {crop_region.width, crop_region.height};
-	}
-	if (resizefirst)
-		mask_dim = *vidGeo;
-	cv::Mat mask(mask_dim.second, mask_dim.first, CV_8U);
+	// Processing components, at virtual true geometry
+	cv::Mat mask(vidGeo->second, vidGeo->first, CV_8U);
 
-	cv::Mat raw;
-	int aiw,aih;
-	if (!crop_region.width) {
-		aiw=capGeo->first;
-		aih=capGeo->second;
-	} else {
-		aiw=crop_region.width;
-		aih=crop_region.height;
-	}
-	if (resizefirst) {
-		aiw=vidGeo->first;
-		aih=vidGeo->second;
-	}
-	CalcMask ai(*s_model, threads, aiw, aih, debug);
+	cv::Mat raw[2]; // 2 buffer in order to avoid copy
+	int idx = 0;    // for selection of buffer
+	CalcMask ai(*s_model, threads, vidGeo->first, vidGeo->second, debug);
 
 	ti.lastns = timestamp();
-	if (debug)
+	if (debug) {
 		fprintf(stderr, "Startup: %ldns\n", diffnanosecs(ti.lastns,ti.bootns));
+	}
 
 	bool filterActive = true;
-
+	cv::Mat current, previous = {};
 	// mainloop
 	int skip = fpsDivisor;
 	while(true) {
@@ -786,10 +775,12 @@ int main(int argc, char* argv[]) try {
 		cap.grab();
 		ti.grabns = timestamp();
 		// copy new frame to buffer
-		cap.retrieve(raw);
+		cap.retrieve(raw[idx]);
 		ti.retrns = timestamp();
 
-		if (raw.rows == 0 || raw.cols == 0) continue; // sanity check
+		if (raw[idx].rows == 0 || raw[idx].cols == 0) {
+			continue; // sanity check
+		}
 		if (skip < fpsDivisor) {
 			skip++;
 			continue;
@@ -797,15 +788,25 @@ int main(int argc, char* argv[]) try {
 			skip = 1;
 		}
 
-		if (crop_region.height) {
-			raw(crop_region).copyTo(raw);
+		if (crop_region.x || crop_region.y) {
+			raw[idx](crop_region).copyTo(raw[idx]);
 		}
-		if (resizefirst) {
-			cv:resize(raw, raw, cv::Size(vidGeo->first,vidGeo->second));
+		if ( raw[idx].cols != vidGeo->first || raw[idx].rows != vidGeo->second) {
+			cv:resize(raw[idx], raw[idx], cv::Size(vidGeo->first,vidGeo->second));
 		}
 
-		ai.set_input_frame(raw);
+		if (sendPrevious) {
+			if (!raw[(idx+1)&1].cols) {
+				raw[(idx+1)&1] = raw[idx]; // only for the first video frame!
+			}
+		}
+
+		ai.set_input_frame(raw[idx]);
 		ti.copyns = timestamp();
+
+		if(sendPrevious) {
+			idx = (idx + 1) & 1;
+		}
 
 		// do background detection magic
 		ai.get_output_mask(mask);
@@ -818,54 +819,40 @@ int main(int argc, char* argv[]) try {
 			// - default green (initial value)
 			bool canBlur = false;
 			if (pbk) {
-				int tw,th;
-				if (crop_region.height) {
-					tw = crop_region.width;
-					th = crop_region.height;
-				} else {
-					tw = capGeo->first;
-					th = capGeo->second;
-				}
-				if (resizefirst) {
-					tw = vidGeo->first;
-					th = vidGeo->second;
-				}
-				if (grab_background(pbk, tw, th, bg) < 0)
+				if (grab_background(pbk, vidGeo->first, vidGeo->second, bg) < 0) {
 					throw "Failed to read background frame";
+				}
 				canBlur = true;
 			} else if (blur_strength) {
-				raw.copyTo(bg);
+				raw[idx].copyTo(bg);
 				canBlur = true;
 			}
 			// blur frame if requested (unless it's just green)
-			if (canBlur && blur_strength)
+			if (canBlur && blur_strength) {
 				cv::GaussianBlur(bg,bg,cv::Size(blur_strength,blur_strength), 0);
+			}
 			ti.prepns = timestamp();
 			// alpha blend background over foreground using mask
-			raw = alpha_blend(bg, raw, mask);
+			raw[idx] = alpha_blend(bg, raw[idx], mask);
 		} else {
 			ti.prepns = timestamp();
 		}
 		ti.maskns = timestamp();
 
 		if (flipHorizontal && flipVertical) {
-			cv::flip(raw, raw, -1);
+			cv::flip(raw[idx], raw[idx], -1);
 		} else if (flipHorizontal) {
-			cv::flip(raw, raw, 1);
+			cv::flip(raw[idx], raw[idx], 1);
 		} else if (flipVertical) {
-			cv::flip(raw, raw, 0);
+			cv::flip(raw[idx], raw[idx], 0);
 		}
 		ti.postns = timestamp();
 
-		// scale to virtual camera geometry (if required)
-		if (vidGeo != capGeo && !resizefirst) {
-			cv::resize(raw, raw, cv::Size(vidGeo->first,vidGeo->second));
-		}
 		// write frame to v4l2loopback as YUYV
-		raw = convert_rgb_to_yuyv(raw);
-		int framesize = raw.step[0]*raw.rows;
+		raw[idx] = convert_rgb_to_yuyv(raw[idx]);
+		int framesize = raw[idx].step[0]*raw[idx].rows;
 		while (framesize > 0) {
-			int ret = write(lbfd,raw.data,framesize);
+			int ret = write(lbfd,raw[idx].data,framesize);
 			if(ret <= 0) {
 				perror("writing to loopback device");
 				exit(1);
@@ -886,48 +873,51 @@ int main(int argc, char* argv[]) try {
 		double mfps = 1e9/diffnanosecs(ti.v4l2ns,ti.lastns);
 		double afps = 1e9/ai.loopns;
 		if (debugTiming) {
-			printf("main [grab:%9ld retr:%9ld copy:%9ld prep:%9ld mask:%9ld post:%9ld v4l2:%9ld FPS: %5.2f] ai: [wait:%9ld prep:%9ld tflt:%9ld mask:%9ld FPS: %5.2f] \e[K\r",
-				diffnanosecs(ti.grabns,ti.lastns),
-				diffnanosecs(ti.retrns,ti.grabns),
-				diffnanosecs(ti.copyns,ti.retrns),
-				diffnanosecs(ti.prepns,ti.copyns),
-				diffnanosecs(ti.maskns,ti.prepns),
-				diffnanosecs(ti.postns,ti.maskns),
-				diffnanosecs(ti.v4l2ns,ti.postns),
+			printf("main [grab:%7.4f retr:%7.4f copy:%7.4f prep:%7.4f mask:%7.4f post:%7.4f v4l2:%7.4f tot:%7.4f FPS: %5.2f] ai: [wait:%7.4f prep:%7.4f tflt:%7.4f mask:%7.4f tot:%7.4f FPS: %5.2f] \e[K\r",
+				diffnanosecs(ti.grabns,ti.lastns)/1000000.0,
+				diffnanosecs(ti.retrns,ti.grabns)/1000000.0,
+				diffnanosecs(ti.copyns,ti.retrns)/1000000.0,
+				diffnanosecs(ti.prepns,ti.copyns)/1000000.0,
+				diffnanosecs(ti.maskns,ti.prepns)/1000000.0,
+				diffnanosecs(ti.postns,ti.maskns)/1000000.0,
+				diffnanosecs(ti.v4l2ns,ti.postns)/1000000.0,
+				diffnanosecs(ti.v4l2ns,ti.grabns)/1000000.0,
 				mfps,
-				ai.waitns,
-				ai.prepns,
-				ai.tfltns,
-				ai.maskns,
+				ai.waitns/1000000.0,
+				ai.prepns/1000000.0,
+				ai.tfltns/1000000.0,
+				ai.maskns/1000000.0,
+				(ai.prepns+ai.tfltns+ai.maskns)/1000000.0,
 				afps
 			);
 			fflush(stdout);
 		}
 		ti.lastns = timestamp();
-		if (debug < 2)
+		if (debug < 2) {
 			continue;
+		}
 
 		cv::Mat test;
-		cv::cvtColor(raw,test,cv::COLOR_YUV2BGR_YUYV);
+		cv::cvtColor(raw[idx],test,cv::COLOR_YUV2BGR_YUYV);
 		// frame rates & sizes at the bottom
 		if (showFPS) {
 			char status[80];
 			snprintf(status, sizeof(status), "MainFPS: %5.2f AiFPS: %5.2f (%dx%d->%dx%d)",
-				mfps, afps, capGeo->first, capGeo->second, vidGeo->first, vidGeo->second);
+			         mfps, afps, capGeo->first, capGeo->second, vidGeo->first, vidGeo->second);
 			cv::putText(test, status, cv::Point(5, test.rows-5), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0, 255, 255));
 		}
 		// keyboard help
 		if (showHelp) {
 			static const std::string help[] = {
-				"Keyboard help:",
-				" q: quit",
-				" s: switch filter on/off",
-				" h: toggle horizontal flip",
-				" v: toggle vertical flip",
-				" f: toggle FPS display on/off",
-				" b: toggle background display on/off",
-				" m: toggle mask display on/off",
-				" ?: toggle this help text on/off"
+			    "Keyboard help:",
+			     " q: quit",
+			     " s: switch filter on/off",
+			     " h: toggle horizontal flip",
+			     " v: toggle vertical flip",
+			     " f: toggle FPS display on/off",
+			     " b: toggle background display on/off",
+			     " m: toggle mask display on/off",
+			     " ?: toggle this help text on/off"
 			};
 			for (int i=0; i<sizeof(help)/sizeof(std::string); i++) {
 				cv::putText(test, help[i], cv::Point(10,test.rows/2+i*15), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0,255,255));
@@ -939,7 +929,7 @@ int main(int argc, char* argv[]) try {
 			grab_thumbnail(pbk, thumb);
 			if (!thumb.empty()) {
 				int h = thumb.rows*160/thumb.cols;
-				if ((h < raw.rows*3/4 || thumb.cols < raw.cols/2) && h > 50) {
+				if ((h < raw[idx].rows*3/4 || thumb.cols < raw[idx].cols/2) && h > 50) {
 					cv::Rect cr = bs_calc_cropping(thumb.cols, thumb.rows, 160, h);
 					thumb(cr).copyTo(thumb);
 					cv::Rect r = cv::Rect(0, 0, thumb.cols, thumb.rows);
@@ -954,14 +944,14 @@ int main(int argc, char* argv[]) try {
 			if (!mask.empty()) {
 				cv::Mat smask, cmask;
 				int mheight = mask.rows*160/mask.cols;
-				if ( mheight < raw.rows*3/4 || mask.cols < raw.cols/2) {
+				if ( mheight < raw[idx].rows*3/4 || mask.cols < raw[idx].cols/2) {
 					cv::resize(mask, smask, cv::Size(160, mheight));
 					cv::cvtColor(smask, cmask, cv::COLOR_GRAY2BGR);
-					cv::Rect r = cv::Rect(raw.cols-160, 0, 160,mheight);
+					cv::Rect r = cv::Rect(raw[idx].cols-160, 0, 160,mheight);
 					cv::Mat mri = test(r);
 					cmask.copyTo(mri);
 					cv::rectangle(test, r, cv::Scalar(255,255,255));
-					cv::putText(test, "Mask", cv::Point(raw.cols-155,115), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0,255,255));
+					cv::putText(test, "Mask", cv::Point(raw[idx].cols-155,115), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0,255,255));
 				}
 			}
 		}

@@ -59,8 +59,9 @@ struct backscrub_ctx_t {
 // https://stackoverflow.com/questions/40159892/using-asprintf-on-windows
 static int vasprintf(char **msgp, const char *fmt, va_list ap) {
 	int len = _vscprintf(fmt, ap);
-	if (len<=0)
+	if (len<=0) {
 		return len;
+	}
 	*msgp = (char *)malloc(len+1);
 	len = vsprintf_s(*msgp, len+1, fmt, ap);
 	if (len<=0) {
@@ -263,8 +264,9 @@ void *bs_maskgen_new(
 }
 
 void bs_maskgen_delete(void *context) {
-	if (!context)
+	if (!context) {
 		return;
+	}
 	backscrub_ctx_t &ctx = *((backscrub_ctx_t *)context);
 	// clear all mask data
 	ctx.ofinal.deallocate();
@@ -272,11 +274,13 @@ void bs_maskgen_delete(void *context) {
 	ctx.input.deallocate();
 	ctx.output.deallocate();
 	// drop interpreter (if present)
-	if (ctx.interpreter != nullptr)
+	if (ctx.interpreter != nullptr) {
 		ctx.interpreter.reset();
+	}
 	// drop model (if present)
-	if (ctx.model != nullptr)
+	if (ctx.model != nullptr) {
 		ctx.model.reset();
+	}
 	delete &ctx;
 }
 
@@ -304,16 +308,18 @@ bool bs_maskgen_process(void *context, cv::Mat &frame, cv::Mat &mask) {
 
 	// convert to float and normalize values expected by the model
 	in_u8_rgb.convertTo(ctx.input,CV_32FC3,ctx.norm.scaling,ctx.norm.offset);
-	if (ctx.onprep)
+	if (ctx.onprep) {
 		ctx.onprep(ctx.caller_ctx);
+	}
 
 	// Run inference
 	if (ctx.interpreter->Invoke() != kTfLiteOk) {
 		_dbg(ctx, "error: failed to interpret video frame\n");
 		return false;
 	}
-	if (ctx.oninfer)
+	if (ctx.oninfer) {
 		ctx.oninfer(ctx.caller_ctx);
+	}
 
 	float* tmp = (float*)ctx.output.data;
 	uint8_t* out = (uint8_t*)ctx.ofinal.data;
