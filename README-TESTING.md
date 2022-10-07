@@ -1,5 +1,10 @@
 # Test version
 
+## Revision 3
+
+* Fix wrong mutex handling! 
+* Added text to usage()
+
 ## Revision 2:
 
 * Removed the test option --resize-first, the old behaviour was wrong.

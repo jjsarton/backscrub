@@ -95,6 +95,7 @@ static void read_thread(std::weak_ptr<background_t> weak) {
 				std::unique_lock<std::mutex> hold(pbkd->thumbmux);
 				pbkd->thumb = thumb;
 			}
+			hold.unlock();
 			last = now;
 			// wait for next frame, some sources are real-time, others are not, this ensures all play in real-time.
 			next += std::chrono::nanoseconds((long)(1e9/pbkd->fps));
@@ -111,6 +112,7 @@ static void read_thread(std::weak_ptr<background_t> weak) {
 			if (pbkd->frame>0 && pbkd->cap.set(cv::CAP_PROP_POS_FRAMES, 0)) {
 				std::unique_lock<std::mutex> hold(pbkd->rawmux);
 				pbkd->frame = 0;
+				hold.unlock();
 			} else {
 				// unable to reset or previous attempt produced no more frames - stop
 				if (debug) fprintf(stderr, "background: thread stopping at end of stream and not resettable\n");
@@ -249,6 +251,7 @@ int grab_background(std::shared_ptr<background_t> pbkd, int width, int height, c
 			cv::resize(pbkd->raw, out, cv::Size(width, height));
 		}
 		frm = pbkd->frame;
+		hold.unlock();
 	} else {
 		if (!pbkd->bg_stored) {
 			// resize still image as requested into out
@@ -271,5 +274,6 @@ int grab_thumbnail(std::shared_ptr<background_t> pbkd, cv::Mat &out) {
 	}
 	std::unique_lock<std::mutex> hold(pbkd->thumbmux);
 	out = pbkd->thumb.clone();
+	hold.unlock();
 	return 0;
 }
