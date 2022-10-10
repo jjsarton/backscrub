@@ -68,13 +68,15 @@ static void read_thread(std::weak_ptr<background_t> weak) {
 		cv::Mat grab;
 		if (pbkd->cap.read(grab)) {
 			// got a frame, lock and copy for callers
-			std::unique_lock<std::mutex> hold(pbkd->rawmux);
-			grab.copyTo(pbkd->raw);
-			pbkd->frame += 1;
-			// if last frame reached (gstreamer and GIF file) set to frame 0
-			if (pbkd->frame == pbkd->cnt) {
-				pbkd->cap.set(cv::CAP_PROP_POS_FRAMES, 0);
-				pbkd->frame = 0;
+			{
+				std::unique_lock<std::mutex> hold(pbkd->rawmux);
+				grab.copyTo(pbkd->raw);
+				pbkd->frame += 1;
+				// if last frame reached (gstreamer and GIF file) set to frame 0
+				if (pbkd->frame == pbkd->cnt) {
+					pbkd->cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+					pbkd->frame = 0;
+				}
 			}
 			// grab timing point
 			auto now = std::chrono::steady_clock::now();
@@ -91,11 +93,11 @@ static void read_thread(std::weak_ptr<background_t> weak) {
 				snprintf(msg, sizeof(msg), "FRM:%05d", fps, pbkd->frame);
 				cv::putText(thumb, msg, cv::Point(5, 30), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0, 255, 255));
 				cv::putText(thumb, "Background", cv::Point(5, pbkd->thumb.rows-5), cv::FONT_HERSHEY_PLAIN, 1.0, cv::Scalar(0, 255, 255));
-
-				std::unique_lock<std::mutex> hold(pbkd->thumbmux);
-				pbkd->thumb = thumb;
+				{
+					std::unique_lock<std::mutex> hold(pbkd->thumbmux);
+					pbkd->thumb = thumb;
+				}
 			}
-			hold.unlock();
 			last = now;
 			// wait for next frame, some sources are real-time, others are not, this ensures all play in real-time.
 			next += std::chrono::nanoseconds((long)(1e9/pbkd->fps));
@@ -112,7 +114,6 @@ static void read_thread(std::weak_ptr<background_t> weak) {
 			if (pbkd->frame>0 && pbkd->cap.set(cv::CAP_PROP_POS_FRAMES, 0)) {
 				std::unique_lock<std::mutex> hold(pbkd->rawmux);
 				pbkd->frame = 0;
-				hold.unlock();
 			} else {
 				// unable to reset or previous attempt produced no more frames - stop
 				if (debug) fprintf(stderr, "background: thread stopping at end of stream and not resettable\n");
@@ -251,7 +252,6 @@ int grab_background(std::shared_ptr<background_t> pbkd, int width, int height, c
 			cv::resize(pbkd->raw, out, cv::Size(width, height));
 		}
 		frm = pbkd->frame;
-		hold.unlock();
 	} else {
 		if (!pbkd->bg_stored) {
 			// resize still image as requested into out
@@ -274,6 +274,5 @@ int grab_thumbnail(std::shared_ptr<background_t> pbkd, cv::Mat &out) {
 	}
 	std::unique_lock<std::mutex> hold(pbkd->thumbmux);
 	out = pbkd->thumb.clone();
-	hold.unlock();
 	return 0;
 }

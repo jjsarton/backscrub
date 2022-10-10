@@ -812,11 +812,9 @@ int main(int argc, char* argv[]) try {
 			idx = (idx + 1) & 1;
 		}
 
-		// do background detection magic
-		ai.get_output_mask(mask);
-		ti.copyns = timestamp();
-
 		if (filterActive) {
+			// do background detection magic
+			ai.get_output_mask(mask);
 			// get background frame:
 			// - specified source if set
 			// - copy of input video if blur_strength != 0

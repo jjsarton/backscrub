@@ -1,5 +1,9 @@
 # Test version
 
+## Revision 4
+
+* Revert some wrong code from rev 3
+ 
 ## Revision 3
 
 * Fix wrong mutex handling! 
